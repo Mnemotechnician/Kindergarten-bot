@@ -49,7 +49,7 @@ object KindergartenExtension : Extension() {
 	val userCooldowns = mutableMapOf<Snowflake, Instant>()
 	val targetUserCooldowns = mutableMapOf<Snowflake, Instant>()
 
-	val votingTime = 2.minutes
+	val votingTime = 7.minutes
 	val cooldownChannel = votingTime + 1.minutes
 	val cooldownUser = votingTime + 5.minutes
 	/** Applies to the target upon a failed voting. Upon a successful voting, a much longer cooldown is applied. */
