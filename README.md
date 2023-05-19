@@ -1,7 +1,9 @@
-# "Use Linux" discord bot
-Sends a message saying "remember to use linux" into every opted-in channel every 4 hours.
+# Kindergarten discord bot
+A discord bot that allows your users to temporarily lock each other in a dedicated channel c:
 
-You can use the `/add-channel` command to opt-in, `/remove-channel` to opt-out.
+Use the `/set-kindergarten` command to set up a kindergarten channel in your server
+and follow the instructions it will send you. After that, your users will be able to use
+the `/lock-user` command to lock each other there.
 
-You can invite the bot to your guild with via the following link:
-https://discord.com/api/oauth2/authorize?client_id=1102611086756290560&permissions=68608&scope=bot
+Due to how the permission system of discord works, this bot needs the "manage channels" and "manage roles"
+permission on the whole server to set everything up and deny kindergartened users access to other channels.
