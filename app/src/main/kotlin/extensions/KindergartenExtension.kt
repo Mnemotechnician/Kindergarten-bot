@@ -36,6 +36,7 @@ import kotlinx.serialization.*
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.*
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -382,11 +383,14 @@ object KindergartenExtension : Extension() {
 				val kindergarten = kindergartens.find { it.guildId == guildId } ?: error("No kindergarten channel")
 				val duration = arguments.durationSeconds.seconds
 
-				kindergarten.attendees.find { it.userId == arguments.user.id }?.free()
+				kindergarten.attendees.find { it.userId == arguments.user.id }?.free() ?: run {
+					log("User not found")
+				}
 				if (arguments.lock) {
 					kindergarten.addAttendant(arguments.user.id, Clock.System.now() + duration)
 				}
 
+				saveState()
 				respond { content = "Success." }
 			}
 		}
@@ -396,7 +400,11 @@ object KindergartenExtension : Extension() {
 			while (true) {
 				delay(60_000L)
 				kindergartens.forEach {
-					it.attendees.forEach { attendee ->
+					// We cannot synchronize here, so we copy the list instead.
+					val attendees = synchronized(it.attendees) {
+						ArrayList(it.attendees)
+					}
+					attendees.forEach { attendee ->
 						if (attendee.shouldBeFreed()) {
 							runCatching {
 								attendee.freeIfNecessary()
@@ -408,20 +416,28 @@ object KindergartenExtension : Extension() {
 						}
 					}
 				}
+				// In addition to that, save the current state
+				saveState()
 			}
 		}
 
 		// Ensure each channel has correct permissions set up
 		kord.launch {
 			while (true) {
-				delay(120_000L)
+				log("Channel permission sync has began.")
+				var processed = 0
+
 				kindergartens.forEach { channel ->
 					runCatching {
 						channel.ensureCorrectPermissions()
+						processed++
 					}.onFailure {
 						log("Failed to set permissions for ${channel.guildId}: $it")
 					}
 				}
+
+				log("Channel permission sync has finished. $processed channels processed.")
+				delay(600_000L)
 			}
 		}
 
@@ -457,8 +473,11 @@ object KindergartenExtension : Extension() {
 			val stateObj = Json.decodeFromString<State>(state)
 
 			stateObj.kindergartens.forEach {
-				it.attendees.forEach { attendee ->
-					attendee.kindergarten = stateObj.kindergartens.find { it.guildId == attendee.kindergartenGuildId }!!
+				synchronized(it.attendees) {
+					it.attendees.forEach { attendee ->
+						attendee.kindergarten =
+							stateObj.kindergartens.find { it.guildId == attendee.kindergartenGuildId }!!
+					}
 				}
 			}
 
@@ -553,7 +572,7 @@ object KindergartenExtension : Extension() {
 		val kindergartenRole: Snowflake,
 		/** Number of votes required to pass a lock-up voting. */
 		val requiredVotes: Int,
-		/** All users attending this channel. Do not add by hand. */
+		/** All users attending this channel. Do not add by hand. Must be synchronized on. */
 		val attendees: MutableList<Attendee>
 	) {
 		@Transient
@@ -570,7 +589,9 @@ object KindergartenExtension : Extension() {
 
 			realAttendee.kindergartenGuildId = guildId
 			realAttendee.kindergarten = this
-			attendees.add(realAttendee)
+			synchronized(attendees) {
+				attendees.add(realAttendee)
+			}
 			realAttendee.ensureAssignedRole()
 		}
 
@@ -590,26 +611,31 @@ object KindergartenExtension : Extension() {
 
 			val guild = kord.getGuildOrThrow(guildId, EntitySupplyStrategy.rest)
 
-			guild.channels.filterIsInstance<Category>().collect {
-				if (!it.botHasPermissions(Permission.ViewChannel, Permission.ManageChannels)) {
-					log("Bot does not have permissions to manage ${it.name}")
-					return@collect
-				}
+			guild.channels
+				.filterIsInstance<TextChannel>()
+				.filter { it.id != channelId }
+				.collect {
+					if (!it.botHasPermissions(Permission.ViewChannel, Permission.ManageChannels)) {
+						log("Bot does not have permissions to manage ${it.name}")
+						return@collect
+					}
 
-				// Ensure the role override exists and denies all the permissions
-				val permissionOverride = it.permissionOverwrites.find { it.type == OverwriteType.Role && it.target == kindergartenRole }
-				val needsUpdate = permissionOverride == null
-					|| deniedPermissions.any { it in permissionOverride.allowed }
-					|| deniedPermissions.any { it !in permissionOverride.denied }
+					// Ensure the role override exists and denies all the permissions
+					val permissionOverride = it.permissionOverwrites.find { it.type == OverwriteType.Role && it.target == kindergartenRole }
+					val needsUpdate = permissionOverride == null
+						|| deniedPermissions.any { it in permissionOverride.allowed }
+						|| deniedPermissions.any { it !in permissionOverride.denied }
 
-				if (needsUpdate) {
-					it.addOverwrite(PermissionOverwrite.forRole(
-						kindergartenRole,
-						allowed = Permissions(),
-						denied = Permissions(*deniedPermissions.toTypedArray())
-					), "Ensure the naughty kids don't escape the kindergarten.")
+					if (needsUpdate) {
+						it.addOverwrite(PermissionOverwrite.forRole(
+							kindergartenRole,
+							allowed = Permissions(),
+							denied = Permissions(*deniedPermissions.toTypedArray())
+						), "Ensure the naughty kids don't escape the kindergarten.")
+
+						log("Updated permissions for ${it.name}")
+					}
 				}
-			}
 		}
 
 		suspend fun obtainKindergartenRole() =
@@ -645,6 +671,11 @@ object KindergartenExtension : Extension() {
 			val role = kindergarten.obtainKindergartenRole()
 
 			member.removeRole(role.id, "Was freed from the kindergarten")
+			synchronized(kindergarten.attendees) {
+				kindergarten.attendees.remove(this)
+			}
+
+			log("${member.displayName} was freed from the kindergarten.")
 		}
 
 		/** Ensures that this attendee has the necessary role. */
