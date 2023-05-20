@@ -11,6 +11,7 @@ import com.kotlindiscord.kord.extensions.components.forms.ModalForm
 import com.kotlindiscord.kord.extensions.extensions.*
 import com.kotlindiscord.kord.extensions.types.*
 import com.kotlindiscord.kord.extensions.utils.*
+import dev.kord.cache.api.data.description
 import dev.kord.common.entity.*
 import dev.kord.common.exception.RequestException
 import dev.kord.core.Kord
@@ -27,6 +28,7 @@ import dev.kord.rest.builder.message.create.embed
 import dev.kord.rest.builder.message.modify.embed
 import dev.kord.rest.request.RestRequestException
 import io.ktor.http.*
+import io.sentry.Breadcrumb.user
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.datetime.*
@@ -36,6 +38,7 @@ import java.io.File
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 object KindergartenExtension : Extension() {
 	override val name = "kindergarten"
@@ -181,7 +184,7 @@ object KindergartenExtension : Extension() {
 
 		publicSlashCommand(::LockUserArgs) {
 			name = "lock-user"
-			description = "Initiate a voting in the current channle to lock the user in the kindergarten channel."
+			description = "Initiate a voting in the current channel to lock the user in the kindergarten channel."
 
 			action {
 				val guildId = event.interaction.data.guildId.value ?: error("Null guild id")
@@ -204,8 +207,21 @@ object KindergartenExtension : Extension() {
 					now < channelCooldown -> "You must wait ${(channelCooldown - now).inWholeMinutes} minutes before voting again in this channel."
 					now < userCooldown -> "You must wait ${(userCooldown - now).inWholeMinutes} minutes before voting again."
 					now < targetUserCooldown -> "You must wait ${(targetUserCooldown - now).inWholeMinutes} minutes before voting again on this user."
-					else -> null
+
+					else -> {
+						val targetUserTopRole = target.getTopRole()
+						val kgRole = kindergarten.obtainKindergartenRole()
+						val selfRole = this@KindergartenExtension.kord.getSelf().asMember(guildId).getTopRole()!!
+
+						when {
+							selfRole.rawPosition < kgRole.rawPosition -> "I can not modify the kindergarten role! My highest role must be higher than it!"
+							targetUserTopRole == null -> null
+							targetUserTopRole.rawPosition > kgRole.rawPosition -> "The user is more powerful than the kindergarten role."
+							else -> null
+						}
+					}
 				}
+
 				if (failReason != null) {
 					respondEphemeral { content = failReason }
 					return@action
@@ -216,7 +232,7 @@ object KindergartenExtension : Extension() {
 
 				respond {
 					val votes = AtomicInteger(0)
-					val votedUsers = Collections.synchronizedSet(hashSetOf(initiator.id, target.id))
+					val votedUsers = Collections.synchronizedSet(hashSetOf(target.id))
 					val requiredVotes = kindergarten!!.requiredVotes
 					val endTime = Clock.System.now() + votingTime
 
@@ -250,7 +266,7 @@ object KindergartenExtension : Extension() {
 
 							action {
 								if (user.id in votedUsers) {
-									respondEphemeral { content = "You have already voted up." }
+									respond { content = "You have already voted." }
 									return@action
 								}
 								votedUsers += user.id
@@ -266,7 +282,7 @@ object KindergartenExtension : Extension() {
 							label = "Vote down"
 							action {
 								if (user.id in votedUsers) {
-									respondEphemeral { content = "You have already voted down." }
+									respond { content = "You have already voted." }
 									return@action
 								}
 								votedUsers += user.id
@@ -316,6 +332,62 @@ object KindergartenExtension : Extension() {
 						}
 					}
 				}
+			}
+		}
+
+		publicSlashCommand(::CheckAgeArgs) {
+			name = "check-age"
+			description = "Free a user from the kindergarten if they're eligible for that."
+
+			action {
+				val user = arguments.user
+				val guildId = event.interaction.data.guildId.value ?: error("Null guild id")
+				val kindergarten = kindergartens.find { it.guildId == guildId }
+				val attendee = kindergarten?.attendees?.find { it.userId == user.id }
+
+				if (kindergarten == null) {
+					respondEphemeral { content = "This server doesn't have a configured kindergarten channel. This action is ambiguous." }
+					return@action
+				}
+
+				if (attendee == null) {
+					// Check if the user has the kindergarten role first
+					val member = user.asMember(guildId)
+					if (kindergarten.kindergartenRole in member.roleIds) {
+						member.removeRole(kindergarten.kindergartenRole)
+						respond { content = "${member.displayName} wasn't a kindergarten attendee, thus their respective role was removed." }
+					} else {
+						respondEphemeral { content = "This user is not in a kindergarten." }
+					}
+					return@action
+				}
+
+				if (attendee.freeIfNecessary()) {
+					respond { content = "Successfully freed ${user.tag}." }
+				} else {
+					respondEphemeral { content = "This user is already free." }
+				}
+			}
+		}
+
+		ephemeralSlashCommand(::DebugLockArgs) {
+			name = "debug"
+			description = "Bot owner only."
+			
+			ownerOnlyCheck()
+			
+			action {
+				// It's just a debug command, so no descriptive error messages
+				val guildId = event.interaction.data.guildId.value ?: error("Null guild id")
+				val kindergarten = kindergartens.find { it.guildId == guildId } ?: error("No kindergarten channel")
+				val duration = arguments.durationSeconds.seconds
+
+				kindergarten.attendees.find { it.userId == arguments.user.id }?.free()
+				if (arguments.lock) {
+					kindergarten.addAttendant(arguments.user.id, Clock.System.now() + duration)
+				}
+
+				respond { content = "Success." }
 			}
 		}
 
@@ -440,9 +512,31 @@ object KindergartenExtension : Extension() {
 				"4 hours" to 240L,
 				"5 hours" to 300L,
 				"6 hours" to 360L,
-				"8 hours" to 420L,
-				"12 hours" to 480L
+				"8 hours" to 480L,
+				"12 hours" to 720L
 			)
+		}
+	}
+
+	class CheckAgeArgs : Arguments() {
+		val user by user {
+			name = "user"
+			description = "The user in question."
+		}
+	}
+
+	class DebugLockArgs : Arguments() {
+		val user by user {
+			name = "user"
+			description = "The user in question."
+		}
+		val lock by boolean {
+			name = "lock"
+			description = "Whether to lock the user or just free."
+		}
+		val durationSeconds by int {
+			name = "duration-seconds"
+			description = "How long to lock the user for. Only meaningful when `lock == true`"
 		}
 	}
 
@@ -497,7 +591,10 @@ object KindergartenExtension : Extension() {
 			val guild = kord.getGuildOrThrow(guildId, EntitySupplyStrategy.rest)
 
 			guild.channels.filterIsInstance<Category>().collect {
-				if (!it.botHasPermissions(Permission.ViewChannel, Permission.ManageChannels)) return@collect
+				if (!it.botHasPermissions(Permission.ViewChannel, Permission.ManageChannels)) {
+					log("Bot does not have permissions to manage ${it.name}")
+					return@collect
+				}
 
 				// Ensure the role override exists and denies all the permissions
 				val permissionOverride = it.permissionOverwrites.find { it.type == OverwriteType.Role && it.target == kindergartenRole }
