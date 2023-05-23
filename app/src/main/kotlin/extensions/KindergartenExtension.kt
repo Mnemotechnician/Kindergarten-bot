@@ -5,7 +5,7 @@ import com.github.mnemotechnician.kindergarten.misc.*
 import com.kotlindiscord.kord.extensions.commands.Arguments
 import com.kotlindiscord.kord.extensions.commands.application.slash.converters.impl.numberChoice
 import com.kotlindiscord.kord.extensions.commands.converters.impl.*
-import com.kotlindiscord.kord.extensions.components.buttons.EphemeralInteractionButton
+import com.kotlindiscord.kord.extensions.components.buttons.*
 import com.kotlindiscord.kord.extensions.components.components
 import com.kotlindiscord.kord.extensions.components.forms.ModalForm
 import com.kotlindiscord.kord.extensions.extensions.*
@@ -233,7 +233,7 @@ object KindergartenExtension : Extension() {
 
 				respond {
 					val votes = AtomicInteger(0)
-					val votedUsers = Collections.synchronizedSet(hashSetOf(target.id))
+					val votedUsers = Collections.synchronizedMap(hashMapOf(target.id to 0))
 					val requiredVotes = kindergarten!!.requiredVotes
 					val endTime = Clock.System.now() + votingTime
 
@@ -261,37 +261,34 @@ object KindergartenExtension : Extension() {
 							}
 						}
 
+						suspend fun EphemeralInteractionContext.doVote(vote: Int, user: Snowflake) {
+							if (votedUsers[user] == vote) {
+								respond { content = "You have already voted." }
+								return
+							} else if (user == target.id) {
+								respond { content = "You are not eligible to vote."}
+								return
+							}
+
+							val realVote = vote - (votedUsers[user] ?: 0)
+							votes.addAndGet(realVote)
+
+							votedUsers[user] = vote
+
+							log("$user voted for ${target.displayName}: ${votes.get()}/$requiredVotes")
+							updateDescription()
+						}
+
 						// Vote up
 						add(EphemeralInteractionButton<ModalForm>(null).apply {
 							label = "Vote up"
-
-							action {
-								if (user.id in votedUsers) {
-									respond { content = "You have already voted." }
-									return@action
-								}
-								votedUsers += user.id
-
-								votes.incrementAndGet()
-								log("Voted up: ${user.id} for ${target.displayName}: ${votes.get()}/$requiredVotes")
-								updateDescription()
-							}
+							action { doVote(1, user.id) }
 						})
 
 						// Vote down
 						add(EphemeralInteractionButton<ModalForm>(null).apply {
 							label = "Vote down"
-							action {
-								if (user.id in votedUsers) {
-									respond { content = "You have already voted." }
-									return@action
-								}
-								votedUsers += user.id
-								log("Voted down: ${user.id} for ${target.displayName}: ${votes.get()}/$requiredVotes")
-
-								votes.decrementAndGet()
-								updateDescription()
-							}
+							action { doVote(-1, user.id) }
 						})
 
 						// Called when the voting ends
