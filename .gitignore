@@ -41,3 +41,8 @@ bin/
 ### Mac OS ###
 .DS_Store
 /.env
+
+# Toomfoolery.
+# It's a small thing I use to extract meaninful messages for my message generation neural network
+# Don't worry, I'm not stealing anyone's personal data and not using this outside of one specific guild (off-topic)
+/app/src/main/kotlin/extensions/TempMessageExtractorExtension.kt

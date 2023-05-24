@@ -262,18 +262,18 @@ object KindergartenExtension : Extension() {
 						}
 
 						suspend fun EphemeralInteractionContext.doVote(vote: Int, user: Snowflake) {
-							if (votedUsers[user] == vote) {
+							// The target can vote 0 or 1, others can vote -1 or 1
+							val voteWithBias = if (user != target.id) vote else vote.coerceAtLeast(0)
+
+							if (votedUsers[user] == voteWithBias) {
 								respond { content = "You have already voted." }
-								return
-							} else if (user == target.id) {
-								respond { content = "You are not eligible to vote."}
 								return
 							}
 
-							val realVote = vote - (votedUsers[user] ?: 0)
+							val realVote = voteWithBias - (votedUsers[user] ?: 0)
 							votes.addAndGet(realVote)
 
-							votedUsers[user] = vote
+							votedUsers[user] = voteWithBias
 
 							log("$user voted for ${target.displayName}: ${votes.get()}/$requiredVotes")
 							updateDescription()
