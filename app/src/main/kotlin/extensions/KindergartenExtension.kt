@@ -133,17 +133,19 @@ object KindergartenExtension : Extension() {
 						kindergartens.add(kindergarten.copy(
 							channelId = channel.id,
 							kindergartenRole = role.id,
+							pingRole = arguments.pingRole?.id,
 							requiredVotes = arguments.requiredVotes
 						))
 
 						log("Kindergarten channel edited: ${channel.name} (${channel.id} in ${guildId})")
 					} else {
 						kindergartens.add(KindergartenChannel(
-							guildId,
-							channel.id,
-							role.id,
-							arguments.requiredVotes,
-							mutableListOf()
+							guildId = guildId,
+							channelId = channel.id,
+							kindergartenRole = role.id,
+							pingRole = arguments.pingRole?.id,
+							requiredVotes = arguments.requiredVotes,
+							attendees = mutableListOf()
 						))
 
 						log("Kindergarten channel registered: ${channel.name} (${channel.id} in ${guildId})")
@@ -250,6 +252,10 @@ object KindergartenExtension : Extension() {
 							value = "<t:${endTime.toEpochMilliseconds() / 1000}:R>"
 						}
 						block()
+					}
+
+					kindergarten.pingRole?.let {
+						content = "<@&$it>"
 					}
 					embed { defaultEmbed() }
 
@@ -363,7 +369,7 @@ object KindergartenExtension : Extension() {
 				if (attendee.freeIfNecessary()) {
 					respond { content = "Successfully freed ${user.tag}." }
 				} else {
-					respondEphemeral { content = "This user is already free." }
+					respondEphemeral { content = "This user is locked up and shall not be released yet." }
 				}
 			}
 		}
@@ -509,6 +515,10 @@ object KindergartenExtension : Extension() {
 			name = "role"
 			description = "The kindergarten role. If not specified, it will be created."
 		}
+		val pingRole by optionalRole {
+			name = "ping-role"
+			description = "Optional role to ping when a voting begins."
+		}
 	}
 
 	class LockUserArgs : Arguments() {
@@ -567,6 +577,7 @@ object KindergartenExtension : Extension() {
 		val guildId: Snowflake,
 		val channelId: Snowflake,
 		val kindergartenRole: Snowflake,
+		val pingRole: Snowflake? = null,
 		/** Number of votes required to pass a lock-up voting. */
 		val requiredVotes: Int,
 		/** All users attending this channel. Do not add by hand. Must be synchronized on. */

@@ -14,6 +14,8 @@ repositories {
 }
 
 dependencies {
+	implementation(kotlin("stdlib"))
+
 	implementation("com.kotlindiscord.kord.extensions", "kord-extensions", "1.5.6-SNAPSHOT")
 
 	implementation("dev.kord", "kord-core", "0.8.0")
@@ -22,6 +24,7 @@ dependencies {
 	implementation("org.jetbrains.kotlinx", "kotlinx-serialization-json", "1.3.2")
 
 	implementation("org.slf4j", "slf4j-simple", "2.0.7") // FUCK SLF4J!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	implementation(kotlin("stdlib-jdk8"))
 }
 
 tasks.test {
