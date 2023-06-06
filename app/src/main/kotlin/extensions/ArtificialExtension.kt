@@ -32,11 +32,18 @@ object ArtificialExtension : Extension() {
 	}
 
 	suspend fun ensureArtificialHasKittyRole() {
-		val member = kord.defaultSupplier.getMember(offtopicServerId, artificialId)
+		try {
+			val member = kord.defaultSupplier.getMemberOrNull(offtopicServerId, artificialId) ?: run {
+				log("The kitty has run away!")
+				return
+			}
 
-		if (member.roleIds.none { it == kittyRoleId}) {
-			member.addRole(kittyRoleId, "The kitty is a kitty")
-			log("The kitty has received the role")
+			if (member.roleIds.none { it == kittyRoleId }) {
+				member.addRole(kittyRoleId, "The kitty is a kitty")
+				log("The kitty has received the role")
+			}
+		} catch (e: Exception) {
+			log("Failed to ensure that the kitty is a kitty: $e")
 		}
 	}
 }
