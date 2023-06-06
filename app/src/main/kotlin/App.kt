@@ -10,6 +10,7 @@ suspend fun main() {
 	val bot = ExtensibleBot(TOKEN) {
 		extensions {
 			add { KindergartenExtension }
+			add { ArtificialExtension }
 		}
 	}
 
