@@ -1,6 +1,5 @@
 package com.github.mnemotechnician.kindergarten.extensions
 
-import com.github.mnemotechnician.kindergarten.extensions.KindergartenExtension.kord
 import com.github.mnemotechnician.kindergarten.misc.*
 import com.kotlindiscord.kord.extensions.commands.Arguments
 import com.kotlindiscord.kord.extensions.commands.application.slash.converters.impl.numberChoice
@@ -11,24 +10,17 @@ import com.kotlindiscord.kord.extensions.components.forms.ModalForm
 import com.kotlindiscord.kord.extensions.extensions.*
 import com.kotlindiscord.kord.extensions.types.*
 import com.kotlindiscord.kord.extensions.utils.*
-import dev.kord.cache.api.data.description
 import dev.kord.common.entity.*
-import dev.kord.common.exception.RequestException
 import dev.kord.core.Kord
 import dev.kord.core.behavior.*
-import dev.kord.core.behavior.channel.edit
-import dev.kord.core.behavior.interaction.followup.edit
 import dev.kord.core.entity.*
 import dev.kord.core.entity.channel.*
-import dev.kord.core.entity.interaction.followup.PublicFollowupMessage
 import dev.kord.core.supplier.EntitySupplyStrategy
-import dev.kord.rest.builder.channel.addRoleOverwrite
 import dev.kord.rest.builder.message.EmbedBuilder
-import dev.kord.rest.builder.message.create.embed
+import dev.kord.rest.builder.message.create.*
 import dev.kord.rest.builder.message.modify.embed
 import dev.kord.rest.request.RestRequestException
 import io.ktor.http.*
-import io.sentry.Breadcrumb.user
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.datetime.*
@@ -36,8 +28,9 @@ import kotlinx.serialization.*
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.*
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.*
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
@@ -53,14 +46,20 @@ object KindergartenExtension : Extension() {
 	val userCooldowns = mutableMapOf<Snowflake, Instant>()
 	val targetUserCooldowns = mutableMapOf<Snowflake, Instant>()
 
-	val votingTime = 7.minutes
+	val votingTime = 10.minutes
 	val cooldownChannel = votingTime + 1.minutes
 	val cooldownUser = votingTime + 5.minutes
+
 	/** Applies to the target upon a failed voting. Upon a successful voting, a much longer cooldown is applied. */
 	val cooldownTargetUser = 10.minutes
 
 	val selfId = getKoin().inject<Kord>().value.selfId
-	val requiredChannelPerms = listOf(Permission.ViewChannel, Permission.SendMessages, Permission.ManageChannels, Permission.ManageRoles)
+	val requiredChannelPerms = listOf(
+		Permission.ViewChannel,
+		Permission.SendMessages,
+		Permission.ManageChannels,
+		Permission.ManageRoles
+	)
 	val deniedPermissions = listOf(Permission.ViewChannel, Permission.SendMessages)
 
 	init {
@@ -83,7 +82,10 @@ object KindergartenExtension : Extension() {
 				val channel = arguments.channel.fetchChannel()
 
 				try {
-					this@KindergartenExtension.kord.getGuildOrThrow(guildId, strategy = EntitySupplyStrategy.rest).apply {
+					this@KindergartenExtension.kord.getGuildOrThrow(
+						guildId,
+						strategy = EntitySupplyStrategy.rest
+					).apply {
 						requirePermissions(Permission.ManageRoles)
 						requirePermissions(Permission.ManageChannels)
 					}
@@ -95,15 +97,19 @@ object KindergartenExtension : Extension() {
 
 					val perms = channel.getEffectivePermissions(selfId)
 					if (requiredChannelPerms.any { it !in perms }) {
-						val permsStr = requiredChannelPerms.joinToString { it::class.simpleName!! }
+						val permsStr =
+							requiredChannelPerms.joinToString { it::class.simpleName!! }
 						respond {
-							content = "I must have the following permissions in that channel: $permsStr. " +
-								"In addition, I need the 'Manage Permissions' permission."
+							content =
+								"I must have the following permissions in that channel: $permsStr. " +
+									"In addition, I need the 'Manage Permissions' permission."
 						}
 						return@action
 					}
 
-					if (!event.interaction.user.asMember(guildId).hasPermission(Permission.Administrator)) {
+					if (!event.interaction.user.asMember(guildId)
+							.hasPermission(Permission.Administrator)
+					) {
 						respond { content = "You must be an admin to do this." }
 						return@action
 					}
@@ -119,9 +125,9 @@ object KindergartenExtension : Extension() {
 							name = roleName
 							hoist = true
 							permissions = Permissions {
-								- Permission.ViewChannel
-								- Permission.SendMessages
-								- Permission.AddReactions
+								-Permission.ViewChannel
+								-Permission.SendMessages
+								-Permission.AddReactions
 							}
 						}
 					}
@@ -130,30 +136,35 @@ object KindergartenExtension : Extension() {
 						val kindergarten = kindergartens.find { it.guildId == guildId }!!
 
 						kindergartens.remove(kindergarten)
-						kindergartens.add(kindergarten.copy(
-							channelId = channel.id,
-							kindergartenRole = role.id,
-							pingRole = arguments.pingRole?.id,
-							requiredVotes = arguments.requiredVotes
-						))
+						kindergartens.add(
+							kindergarten.copy(
+								channelId = channel.id,
+								kindergartenRole = role.id,
+								pingRole = arguments.pingRole?.id,
+								requiredVotes = arguments.requiredVotes
+							)
+						)
 
 						log("Kindergarten channel edited: ${channel.name} (${channel.id} in ${guildId})")
 					} else {
-						kindergartens.add(KindergartenChannel(
-							guildId = guildId,
-							channelId = channel.id,
-							kindergartenRole = role.id,
-							pingRole = arguments.pingRole?.id,
-							requiredVotes = arguments.requiredVotes,
-							attendees = mutableListOf()
-						))
+						kindergartens.add(
+							KindergartenChannel(
+								guildId = guildId,
+								channelId = channel.id,
+								kindergartenRole = role.id,
+								pingRole = arguments.pingRole?.id,
+								requiredVotes = arguments.requiredVotes,
+								attendees = mutableListOf()
+							)
+						)
 
 						log("Kindergarten channel registered: ${channel.name} (${channel.id} in ${guildId})")
 					}
 
 					saveState()
 
-					val selfRole = this@KindergartenExtension.kord.getSelf().asMember(guildId).getTopRole()
+					val selfRole =
+						this@KindergartenExtension.kord.getSelf().asMember(guildId).getTopRole()
 					val canInteract = selfRole?.canInteract(role) ?: false
 					respond {
 						content = """
@@ -187,7 +198,8 @@ object KindergartenExtension : Extension() {
 
 		publicSlashCommand(::LockUserArgs) {
 			name = "lock-user"
-			description = "Initiate a voting in the current channel to lock the user in the kindergarten channel."
+			description =
+				"Initiate a voting in the current channel to lock the user in the kindergarten channel."
 
 			action {
 				val guildId = event.interaction.data.guildId.value ?: error("Null guild id")
@@ -205,8 +217,10 @@ object KindergartenExtension : Extension() {
 				val failReason = when {
 					kindergarten == null -> "This server doesn't have a configured kindergarten channel."
 					kindergarten.channelId == event.interaction.channelId -> "You cannot vote in this channel."
+					kindergartens.any { it.attendees.any { it.userId == target.id } } -> "This user is already in the kindergartenn. Use /check-age."
 					target.id == selfId -> "I am an adult."
 					target.id == initiator.id -> "Kinky."
+					target.isOwner() -> "It's impossible to lock up the owner."
 					now < channelCooldown -> "You must wait ${(channelCooldown - now).inWholeMinutes} minutes before voting again in this channel."
 					now < userCooldown -> "You must wait ${(userCooldown - now).inWholeMinutes} minutes before voting again."
 					now < targetUserCooldown -> "You must wait ${(targetUserCooldown - now).inWholeMinutes} minutes before voting again on this user."
@@ -228,114 +242,40 @@ object KindergartenExtension : Extension() {
 				if (failReason != null) {
 					respondEphemeral { content = failReason }
 					return@action
-				} else {
-					channelCooldowns[event.interaction.channelId] = now + cooldownChannel
-					userCooldowns[initiator.id] = now + cooldownUser
 				}
+				channelCooldowns[event.interaction.channelId] = now + cooldownChannel
+				userCooldowns[initiator.id] = now + cooldownUser
+
+				val voting = VotingContext(
+					interaction = this,
+					initiator = initiator,
+					target = target,
+					duration = duration,
+					kindergarten = kindergarten!!
+				)
 
 				respond {
-					val votes = AtomicInteger(0)
-					val votedUsers = Collections.synchronizedMap(hashMapOf(target.id to 0))
-					val requiredVotes = kindergarten!!.requiredVotes
-					val endTime = Clock.System.now() + votingTime
-
-					fun EmbedBuilder.defaultEmbed(block: EmbedBuilder.() -> Unit = {}) {
-						title = "${initiator.displayName} proposes to kindergaten ${target.displayName}"
-						description = "Votes: ${votes.get()}/$requiredVotes"
-						field {
-							name = "Duration"
-							value = "${duration.inWholeHours} hours, ${duration.inWholeMinutes % 60} minutes"
-							inline = true
-						}
-						field {
-							name = "Voting ends"
-							value = "<t:${endTime.toEpochMilliseconds() / 1000}:R>"
-						}
-						block()
-					}
-
 					kindergarten.pingRole?.let {
 						content = "<@&$it>"
+						allowedMentions { roles += it }
 					}
-					embed { defaultEmbed() }
+					embed { voting.defaultEmbed(this) }
 
-					// Voting logic below
 					components(votingTime) {
-						suspend fun updateDescription() {
-							edit {
-								this@edit.embed { defaultEmbed() }
-							}
-						}
-
-						suspend fun EphemeralInteractionContext.doVote(vote: Int, user: Snowflake) {
-							// The target can vote 0 or 1, others can vote -1 or 1
-							val voteWithBias = if (user != target.id) vote else vote.coerceAtLeast(0)
-
-							if (votedUsers[user] == voteWithBias) {
-								respond { content = "You have already voted." }
-								return
-							}
-
-							val realVote = voteWithBias - (votedUsers[user] ?: 0)
-							votes.addAndGet(realVote)
-
-							votedUsers[user] = voteWithBias
-
-							log("$user voted for ${target.displayName}: ${votes.get()}/$requiredVotes")
-							updateDescription()
-						}
-
-						// Vote up
 						add(EphemeralInteractionButton<ModalForm>(null).apply {
 							label = "Vote up"
-							action { doVote(1, user.id) }
+							action { voting.doVote(1, user.id) }
 						})
 
-						// Vote down
 						add(EphemeralInteractionButton<ModalForm>(null).apply {
 							label = "Vote down"
-							action { doVote(-1, user.id) }
+							action { voting.doVote(-1, user.id) }
 						})
 
-						// Called when the voting ends
-						onTimeout {
-							edit {
-								embed { defaultEmbed {
-									fields[1].name = "Voting has ended"
-									fields[1].value = when {
-										votes.get() >= requiredVotes -> "${target.displayName} will be locked up"
-										else -> "${target.displayName} will not be locked up"
-									}
-								} }
-							}
-
-							if (votes.get() >= requiredVotes) {
-								runCatching {
-									kindergarten.addAttendant(
-										target.id,
-										Clock.System.now() + duration
-									)
-
-									targetUserCooldowns[target.id] =
-										Clock.System.now() + duration * 2 + 20.minutes
-
-									saveState()
-									log("Successfully locked up ${target.displayName}.")
-								}.onFailure { e ->
-									log("Failed to lock up ${target.displayName}: $it")
-									edit { embed { defaultEmbed {
-										field {
-											name = "An error has occurred! The user could not be locked up!"
-											value = e.toString()
-										}
-									} } }
-								}
-							} else {
-								targetUserCooldowns[target.id] = Clock.System.now() + cooldownTargetUser
-							}
-						}
+						onTimeout { voting.finish() }
 					}
 				}
+
 			}
 		}
 
@@ -350,7 +290,10 @@ object KindergartenExtension : Extension() {
 				val attendee = kindergarten?.attendees?.find { it.userId == user.id }
 
 				if (kindergarten == null) {
-					respondEphemeral { content = "This server doesn't have a configured kindergarten channel. This action is ambiguous." }
+					respondEphemeral {
+						content =
+							"This server doesn't have a configured kindergarten channel. This action is ambiguous."
+					}
 					return@action
 				}
 
@@ -359,7 +302,9 @@ object KindergartenExtension : Extension() {
 					val member = user.asMember(guildId)
 					if (kindergarten.kindergartenRole in member.roleIds) {
 						member.removeRole(kindergarten.kindergartenRole)
-						respond { content = "${member.displayName} wasn't a kindergarten attendee, thus their respective role was removed." }
+						respond {
+							content = "${member.displayName} wasn't a kindergarten attendee, thus their respective role was removed."
+						}
 					} else {
 						respondEphemeral { content = "This user is not in a kindergarten." }
 					}
@@ -369,7 +314,12 @@ object KindergartenExtension : Extension() {
 				if (attendee.freeIfNecessary()) {
 					respond { content = "Successfully freed ${user.tag}." }
 				} else {
-					respondEphemeral { content = "This user is locked up and shall not be released yet." }
+					respondEphemeral {
+						content = """
+							This user is locked up and shall not be released yet.
+							Time remaining: ${(attendee.endTime - Clock.System.now()).inWholeMinutes} minutes.
+						""".trimIndent()
+					}
 				}
 			}
 		}
@@ -377,13 +327,14 @@ object KindergartenExtension : Extension() {
 		ephemeralSlashCommand(::DebugLockArgs) {
 			name = "debug"
 			description = "Bot owner only."
-			
+
 			ownerOnlyCheck()
-			
+
 			action {
 				// It's just a debug command, so no descriptive error messages
 				val guildId = event.interaction.data.guildId.value ?: error("Null guild id")
-				val kindergarten = kindergartens.find { it.guildId == guildId } ?: error("No kindergarten channel")
+				val kindergarten =
+					kindergartens.find { it.guildId == guildId } ?: error("No kindergarten channel")
 				val duration = arguments.durationSeconds.seconds
 
 				kindergarten.attendees.find { it.userId == arguments.user.id }?.free() ?: run {
@@ -530,16 +481,18 @@ object KindergartenExtension : Extension() {
 			name = "duration"
 			description = "How long to lock the user for."
 			choices += mapOf(
-				"10 minutes" to 10L,
 				"30 minutes" to 30L,
 				"1 hour" to 60L,
+				"69 minutes" to 69L,
 				"2 hours" to 120L,
 				"3 hours" to 180L,
 				"4 hours" to 240L,
 				"5 hours" to 300L,
 				"6 hours" to 360L,
 				"8 hours" to 480L,
-				"12 hours" to 720L
+				"12 hours" to 720L,
+				"16 hours" to 960L,
+				"1 day" to 1440L
 			)
 		}
 	}
@@ -611,11 +564,17 @@ object KindergartenExtension : Extension() {
 				permissions = Permissions()
 			}
 
-			channel.addOverwrite(PermissionOverwrite.forRole(
-				kindergartenRole,
-				allowed = Permissions(Permission.ViewChannel, Permission.SendMessages, Permission.AddReactions),
-				denied = Permissions()
-			))
+			channel.addOverwrite(
+				PermissionOverwrite.forRole(
+					kindergartenRole,
+					allowed = Permissions(
+						Permission.ViewChannel,
+						Permission.SendMessages,
+						Permission.AddReactions
+					),
+					denied = Permissions()
+				)
+			)
 
 			val guild = kord.getGuildOrThrow(guildId, EntitySupplyStrategy.rest)
 
@@ -629,17 +588,20 @@ object KindergartenExtension : Extension() {
 					}
 
 					// Ensure the role override exists and denies all the permissions
-					val permissionOverride = it.permissionOverwrites.find { it.type == OverwriteType.Role && it.target == kindergartenRole }
+					val permissionOverride =
+						it.permissionOverwrites.find { it.type == OverwriteType.Role && it.target == kindergartenRole }
 					val needsUpdate = permissionOverride == null
 						|| deniedPermissions.any { it in permissionOverride.allowed }
 						|| deniedPermissions.any { it !in permissionOverride.denied }
 
 					if (needsUpdate) {
-						it.addOverwrite(PermissionOverwrite.forRole(
-							kindergartenRole,
-							allowed = Permissions(),
-							denied = Permissions(*deniedPermissions.toTypedArray())
-						), "Ensure the naughty kids don't escape the kindergarten.")
+						it.addOverwrite(
+							PermissionOverwrite.forRole(
+								kindergartenRole,
+								allowed = Permissions(),
+								denied = Permissions(*deniedPermissions.toTypedArray())
+							), "Ensure the naughty kids don't escape the kindergarten."
+						)
 
 						log("Updated permissions for ${it.name}")
 					}
@@ -663,6 +625,7 @@ object KindergartenExtension : Extension() {
 		val endTime: Instant
 	) {
 		lateinit var kindergartenGuildId: Snowflake
+
 		@Transient
 		lateinit var kindergarten: KindergartenChannel
 		val hasKindergarten get() = ::kindergarten.isInitialized
@@ -693,6 +656,129 @@ object KindergartenExtension : Extension() {
 
 			if (member.roles.toList().none { it.id == role.id }) {
 				member.addRole(role.id, "Was naughty.")
+			}
+		}
+	}
+
+	class VotingContext(
+		val interaction: PublicInteractionContext,
+		val initiator: Member,
+		val target: Member,
+		val duration: Duration,
+		val kindergarten: KindergartenChannel
+	) {
+		val voteCount = AtomicInteger(0)
+		/** Maps voted users to their effective votes. */
+		val votedUsers = Collections.synchronizedMap(hashMapOf(target.id to 0))
+		val requiredVotes = kindergarten.requiredVotes
+		val endTime = Clock.System.now() + votingTime
+
+		@Volatile
+		var hasFinished = false
+		/** If there are enough votes, this job will finish the voting 1 minute after reaching that point. */
+		@Volatile
+		var quickFinishJob: Job? = null
+		var quickFinishTime: Instant? = null
+
+		fun defaultEmbed(
+			builder: EmbedBuilder,
+			block: EmbedBuilder.() -> Unit = {}
+		) = with(builder) {
+			title = "${initiator.displayName} proposes to kindergarten ${target.displayName}"
+			description = "Votes: ${voteCount.get()}/$requiredVotes"
+			field {
+				name = "Duration"
+				value = "${duration.inWholeHours} hours, ${duration.inWholeMinutes % 60} minutes"
+			}
+			field {
+				val finishAt = when {
+					quickFinishTime != null -> minOf(quickFinishTime!!, endTime)
+					else -> endTime
+				}
+
+				name = "Voting ends"
+				value = "<t:${finishAt.epochSeconds}:R>"
+			}
+			block()
+		}
+
+		suspend fun updateDescription() {
+			if (hasFinished) return
+			interaction.edit {
+				embed { defaultEmbed(this) }
+			}
+		}
+
+		/** Performs a vote. Returns true if the vote was successful. */
+		suspend fun doVote(vote: Int, user: Snowflake): Boolean {
+			// The target can vote 0 or 1, others can vote -1 or 1
+			val voteWithBias = if (user != target.id) vote else vote.coerceAtLeast(0)
+
+			if (votedUsers[user] == voteWithBias) return false
+			if (hasFinished) return false
+
+			val realVote = voteWithBias - (votedUsers[user] ?: 0)
+			voteCount.addAndGet(realVote)
+
+			votedUsers[user] = voteWithBias
+
+			log("$user voted for ${target.displayName}: ${voteCount.get()}/$requiredVotes")
+
+			// Start or stop the quick finish process
+			if (voteCount.get() >= requiredVotes && quickFinishJob == null) {
+				quickFinishJob = kord.launch {
+					delay(1.minutes)
+					finish()
+				}
+				quickFinishTime = Clock.System.now() + 1.minutes
+			} else if (quickFinishJob != null) {
+				quickFinishJob?.cancel()
+				quickFinishJob = null
+				quickFinishTime = null
+			}
+
+			updateDescription()
+			return true
+		}
+
+		suspend fun finish() {
+			if (hasFinished) return
+			hasFinished = true
+
+			interaction.edit {
+				embed {
+					defaultEmbed(this) {
+						fields[1].name = "Voting has ended"
+						fields[1].value = when {
+							voteCount.get() >= requiredVotes -> "${target.displayName} will be locked up"
+							else -> "${target.displayName} will not be locked up"
+						}
+					}
+				}
+			}
+
+			if (voteCount.get() >= requiredVotes) {
+				runCatching {
+					kindergarten.addAttendant(target.id, Clock.System.now() + duration)
+
+					val cooldownDivider = cbrt(duration.inWholeHours / 12.0) + 0.1
+					targetUserCooldowns[target.id] = Clock.System.now() + duration / cooldownDivider + 20.minutes
+
+					saveState()
+					log("Successfully locked up ${target.displayName}.")
+				}.onFailure { e ->
+					interaction.edit {
+						embed { defaultEmbed(this) {
+							field {
+								name = "An error has occurred! The user could not be locked up!"
+								value = e.toString()
+							}
+						} }
+					}
+					log("Failed to lock up ${target.displayName}: $e")
+				}
+			} else {
+				targetUserCooldowns[target.id] = Clock.System.now() + cooldownTargetUser
 			}
 		}
 	}
